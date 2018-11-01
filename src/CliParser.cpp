@@ -12,7 +12,8 @@ bool ConfigParserBase::parse(const char ** argv) {
                                 [ptr](const Option& option) {
             return std::find_if(
                         option.modifiers_.begin(), option.modifiers_.end(),
-                        std::bind(strcmp, *ptr, std::placeholders::_1))
+                        std::bind(std::logical_not<bool>(),
+                                  std::bind(strcmp, *ptr, std::placeholders::_1)))
                     != option.modifiers_.end();
         });
         if (pos != optionMap_.end()) {
