@@ -6,6 +6,7 @@ add_executable(${PROJECT_NAME}
 	Pms.cpp Pms.h
         Properties.cpp Properties.h
 	Mqtt.cpp Mqtt.h
+	CliParser.h CliParser.cpp
         )
 
     target_link_libraries(${PROJECT_NAME} mosquittopp)

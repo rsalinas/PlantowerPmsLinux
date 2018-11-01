@@ -2,6 +2,9 @@
 #include "GoogleDocs.h"
 #include <iostream>
 #include <cstring>
+#include <functional>
+
+#include "CliParser.h"
 #include "Properties.h"
 #include "Mqtt.h"
 
@@ -10,27 +13,37 @@ using namespace std;
 static GoogleDocsUploaderBackend gdub;
 static MqttUploaderBackend mqttub;
 
-struct ConfigParser  {
-    ConfigParser(const char**argv) {
-        parse(argv);
+struct ConfigParser : public ConfigParserBase {
+    ConfigParser() : ConfigParserBase(
+    {
+    {{"-h", "-help"}, nullptr, "Show help", [this](const char**&) -> bool {
+        showHelp();
+        return false;
+    }},
+    {{"-d", "--device"}, "device", "Set device", [this](const char**&ptr) -> bool {
+        device = *++ptr;
+        return true;
+    }},
+    {{"-c", "--config"}, "configfile", "Set config file", [this](const char**&ptr) -> bool {
+        configFile= *++ptr;
+        return true;
+    }},
+    {{"-1", "--singleshot"}, nullptr, "Set single shot mode - get 1 sample and exit", [this](const char**&) -> bool {
+        singleShot = true;
+        return true;
+    }},
+    {{"-v", "--verbose"}, nullptr, "Set high verbosity", [this](const char**&) -> bool {
+        verbose = true;
+        clog << "Setting verbose" << endl;
+        return true;
+    }},
+}) {
     }
-    void parse(const char ** argv) {
-        for (const char**ptr = argv+1; *ptr; ptr++) {
-            if (!strcmp(*ptr, "-d") || !strcmp(*ptr, "--device")) {
-                device = *++ptr;
-            }
-            if (!strcmp(*ptr, "-c") || !strcmp(*ptr, "--config")) {
-                configFile= *++ptr;
-            }
-            if (!strcmp(*ptr, "-1") || !strcmp(*ptr, "--singleshot")) {
-                singleShot = true;
-            }
-            if (!strcmp(*ptr, "-v") || !strcmp(*ptr, "--verbose")) {
-                verbose = true;
-            }
-        }
+
+    void dump() {
         clog << "Device: " << device << endl;
         clog << "Configfile: " << configFile << endl;
+
     }
     bool applyFromProperties(const Properties& props) {
         if (device.empty())
@@ -46,7 +59,11 @@ struct ConfigParser  {
 int main(int argc, const char** argv)
 {
     std::vector<Backend*> backends = { &gdub, &mqttub };
-    ConfigParser configParser{argv};
+    ConfigParser configParser;
+    if (!configParser.parse(argv)) {
+        return EXIT_SUCCESS;
+    }
+
     Properties props{configParser.configFile};
     configParser.applyFromProperties(props);
     props.dump();
