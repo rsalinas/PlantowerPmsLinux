@@ -93,10 +93,12 @@ bool MqttUploaderBackend::initialize(const Properties& props) {
         }
     }
     uploader_.reset(new MqttUploader{std::move(mosq), prefix });
+    return true;
 }
 
 bool MqttUploaderBackend::registerCallback(Pms& pms) {
     pms.addListener(*uploader_);
+    return true;
 }
 
 MqttUploaderBackend::operator bool() const {
@@ -107,5 +109,8 @@ void MqttUploader::onError(const char* message) {
     clog << "mqtt saw error: " << message << endl;
     auto data = message;
     auto err = mosq_->publish(nullptr, statusTopic.c_str(), strlen(data), data, 0, false);
+    if (err != MOSQ_ERR_SUCCESS) {
+        clog << "error notifying error via mqtt" << endl;
+    }
     mosq_->loop();
 }

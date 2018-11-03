@@ -19,7 +19,7 @@ void GoogleDocsUploader::update(const unsigned short* data, const std::vector<It
     }
 
     std::string body;
-    for (int i = 0 ; i < metadata.size(); i++) {
+    for (auto i = 0u ; i < metadata.size(); i++) {
         body += "entry."
                 + std::to_string(itemList_[i])
                 + "="
@@ -69,6 +69,7 @@ bool GoogleDocsUploaderBackend::initialize(const Properties& props)  {
 }
 bool GoogleDocsUploaderBackend::registerCallback(Pms& pms)  {
     pms.addListener(*gdu);
+    return true;
 }
 
 GoogleDocsUploaderBackend::operator bool() const {

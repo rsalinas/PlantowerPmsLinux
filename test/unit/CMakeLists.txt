@@ -22,4 +22,5 @@ add_executable(main
 target_link_libraries(main gtest )
 
 add_test(NAME Main COMMAND main)
+install(TARGETS main DESTINATION bin COMPONENT Test)
 

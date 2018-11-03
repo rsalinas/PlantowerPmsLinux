@@ -5,8 +5,46 @@
 #include <termios.h>
 #include <string.h>
 #include <unistd.h>
+#include <sstream>
+#include <iomanip>
+#include <array>
 
 using namespace std;
+
+std::string bufferToHex(const unsigned char* buffer, size_t length) {
+    std::stringstream stream;
+    stream << std::hex  << std::setfill ('0') << std::setw(sizeof(char)*2);
+    for (size_t i =0; i < length; ++i) {
+        stream << (unsigned int) buffer[i] << " ";
+    }
+    return stream.str();
+}
+
+bool Pms::sendCommand(unsigned char cmd, unsigned  char datah, unsigned  char datal) {
+    std::array<unsigned char, 7> command = {0x42, 0x4d, cmd, datah, datal, 0, 0};
+    short cksum = 0;
+    for (auto ch : command)
+        cksum += ch;
+    command[5] = cksum >> 8 & 0xff;
+    command[6] = cksum & 0xff;
+    clog << "Checksum: " << cksum ;
+    clog << " Issuing command: " << bufferToHex(command.cbegin(), command.size()) << endl;
+    return write(fd_, command.begin(), command.size()) == sizeof command;
+}
+
+bool Pms::setActive(bool active) {
+    return sendCommand(0xe1, 0, active ? 1 : 0);
+}
+
+bool Pms::setRunning(bool running) {
+    clog << __FUNCTION__ << ": " << int(running) << endl;
+    return sendCommand(0xe4, 0, running ? 1 : 0);
+}
+
+bool Pms::pollMeasurementInPassiveMode() {
+
+    return sendCommand( 0xe2, 0, 0);
+}
 
 PollResult pollReadByte(char& ch, int fd, int timeout)
 {
@@ -85,6 +123,9 @@ void Pms::notifyError(PollResult result) {
         clog << "Timeout: device was silent too long";
         errorMessage = "unresponsive";
         break;
+    case POLLRESULT_DATA:
+        //impossible
+        break;
     }
     notifyError(errorMessage);
 
@@ -98,7 +139,7 @@ void Pms::processMeasurement(unsigned short* data) {
     }
     memcpy(lastone, data, sizeof lastone);
 
-    for (int i = 0 ; i < items.size(); i++) {
+    for (auto i = 0u ; i < items.size(); i++) {
         clog << items[i].name << "=" << swapShort(data[i]) << ' ';
     }
     clog << endl;
@@ -150,18 +191,15 @@ Pms::Pms(const char* port) : fd_(open(port, O_RDWR| O_NOCTTY)) {
     //    tcflush( fd, TCIFLUSH );
 }
 
-Pms::~Pms() {
-}
-
 bool Pms::run(bool runOnce) {
     char b;
-    short len_;
+    short len_ = 0;
     unsigned char ecksum_ = 0, cksum = 0;
-    char payload[13*sizeof (short)];
-    short hostdata;
+    Measurement payload;
+    short hostdata = 0;
     enum PacketType {
-        TYPE_MEASUREMENT, TYPE_CONTROL
-    } packetType;
+        TYPE_NONE, TYPE_MEASUREMENT, TYPE_CONTROL
+    } packetType = TYPE_NONE;
     PollResult result;
     while (result = pollReadByte(b, fd_, 3000), result == POLLRESULT_DATA) {
         switch (state_) {
@@ -190,6 +228,7 @@ bool Pms::run(bool runOnce) {
                 len_ = b << 8;
             } else {
                 len_ |= b;
+                clog << "Length received: " << len_ << endl;
                 setState(len_ == 28 ? MEASUREMENT : CONTROLDATA);
                 packetType = len_ == 28 ? TYPE_MEASUREMENT : TYPE_CONTROL;
             }
@@ -208,7 +247,6 @@ bool Pms::run(bool runOnce) {
                 hostdata = b << 8;
             } else {
                 hostdata |= b;
-
                 setState(CKSUM);
             }
             break;
@@ -239,5 +277,12 @@ bool Pms::run(bool runOnce) {
 }
 
 void Pms::processControl(unsigned short data) {
-    clog << "Control: " << data << endl;
+    clog << "Control data: " << data << endl;
+    switch (data)  {
+    case 0xe400:
+        clog << "Sleeping confirmed" << endl;
+        sleepConfirmed_ = true;
+        break;
+
+    }
 }

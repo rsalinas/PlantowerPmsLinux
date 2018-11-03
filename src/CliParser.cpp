@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <string>
 
 using namespace std;
 
@@ -44,7 +45,7 @@ void ConfigParserBase::showHelp() {
             maxModifierListLength = modifierList.size();
         modifierLists.emplace_back(modifierList);
     }
-    for (auto i = 0; i < optionMap_.size(); ++i) {
+    for (auto i = 0u; i < optionMap_.size(); ++i) {
         clog << std::string(2, ' ')
              << modifierLists[i]
                 << std::string(maxModifierListLength - modifierLists[i].size(), ' ')
