@@ -47,23 +47,27 @@ bool Pms::pollMeasurementInPassiveMode() {
     return sendCommand( 0xe2, 0, 0);
 }
 
-PollResult pollReadByte(char& ch, int fd, int timeout)
+PollResult Pms::pollReadByte(char& ch, int timeout)
 {
     fd_set rfds, efds;
     FD_ZERO(&rfds);
     FD_ZERO(&efds);
-    FD_SET(fd, &rfds);
+    FD_SET(fd_, &rfds);
 
     struct timeval tv;
     tv.tv_sec = timeout / 1000;
     tv.tv_usec = timeout % 1000 * 1000;
 
-    retry:
-    switch (select(fd + 1, &rfds, NULL, &efds, &tv)) {
+retry:
+    switch (select(fd_ + 1, &rfds, NULL, &efds, &tv)) {
     case -1:
         if (errno == EINTR) {
-            clog << "interrupted system call, probably signal, FIXME" << endl;
-            goto retry;
+            if (running_) {
+                clog << "interrupted while running, retrying" << endl;
+                goto retry;
+            } else {
+                return POLLRESULT_INTERRUPTED;
+            }
         }
         perror("select()");
         return POLLRESULT_ERROR;
@@ -71,15 +75,15 @@ PollResult pollReadByte(char& ch, int fd, int timeout)
         clog << "Timeout after " << timeout << " ms" << endl;
         return POLLRESULT_TIMEOUT;
     default:
-        if (FD_ISSET(fd, &efds)) {
+        if (FD_ISSET(fd_, &efds)) {
             clog << "Error bit is set" << endl;
             return POLLRESULT_ERROR;
         }
-        if (!FD_ISSET(fd, &rfds)) {
+        if (!FD_ISSET(fd_, &rfds)) {
             clog << "FD has nothing" << endl;
             return POLLRESULT_EOF;
         }
-        switch (read(fd, &ch, 1)) {
+        switch (read(fd_, &ch, 1)) {
         case 0:
             return POLLRESULT_EOF;
         case 1:
@@ -129,6 +133,11 @@ void Pms::notifyError(PollResult result) {
         clog << "Timeout: device was silent too long";
         errorMessage = "unresponsive";
         break;
+
+    case POLLRESULT_INTERRUPTED:
+        clog << "Interrupted by user" << endl;
+        errorMessage = "closed";
+        break;
     case POLLRESULT_DATA:
         //impossible
         break;
@@ -151,6 +160,64 @@ void Pms::processMeasurement(unsigned short* data) {
     clog << endl;
     for (auto listener : listeners_)
         listener->update(data, items);
+}
+
+bool Pms::run(CaptureMode captureMode, int captureInterval_secs ) {
+    setRunning(true);
+    shared_ptr<void> setNotRunningGuard(NULL, [&](void*) {
+        clog << "Stopping device" << endl;
+        setRunning(false);
+    });
+
+    switch (captureMode) {
+    case ALWAYS_ON:
+    {
+        clog << "always on" << endl;
+        setActive(true);
+        Pms::RunResponse rr;
+        while (rr = run(), running_ && rr.type == Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+            clog << "Getting more measurements" << endl;
+        }
+        return rr.type != Pms::RunResponse::RESPONSE_TYPE_ERROR;
+    }
+    case SINGLE_SHOT:
+    {
+        setActive(false);
+        clog << "Waiting for stabilization" << endl;
+        //        sleep(5);
+        clog << "Stable" << endl;
+        pollMeasurementInPassiveMode();
+        auto rr = run();
+        if (rr.type != Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+            clog << "Error getting sample" << endl;
+            return false;
+        }
+        return true;
+    }
+    case TIMED:
+        clog << "timed" << endl;
+        setActive(false);
+        bool startStop = captureInterval_secs >= 5;
+        sleep(3);
+        Pms::RunResponse rr;
+        while (running_) {
+            pollMeasurementInPassiveMode();
+            while (rr = run(), rr.type != Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+                clog << "****** got: " << rr.type << " " << rr.control << endl;
+                clog << "Waiting for measurement" << endl;
+            }
+            if (startStop) {
+                setRunning(false);
+                sleep(captureInterval_secs - 3);
+                setRunning(true);
+                sleep(3);
+            } else {
+                sleep(captureInterval_secs);
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 Pms::Pms(const char* port) : fd_(open(port, O_RDWR| O_NOCTTY)) {
@@ -197,7 +264,7 @@ Pms::Pms(const char* port) : fd_(open(port, O_RDWR| O_NOCTTY)) {
     //    tcflush( fd, TCIFLUSH );
 }
 
-Pms::RunResponse Pms::run(bool runOnce) {
+Pms::RunResponse Pms::run() {
     short len_ = 0;
     unsigned char ecksum_ = 0, cksum = 0;
     Measurement payload;
@@ -207,7 +274,7 @@ Pms::RunResponse Pms::run(bool runOnce) {
     } packetType = TYPE_NONE;
     char b;
     PollResult result;
-    while (result = pollReadByte(b, fd_, 3000), result == POLLRESULT_DATA) {
+    while (result = pollReadByte(b, 3000), result == POLLRESULT_DATA) {
         switch (state_) {
         case HEADER1:
             if (b == 'B') {
@@ -296,4 +363,8 @@ void Pms::processControl(unsigned short data) {
     default:
         clog << "Unknown control data: " << data << endl;
     }
+}
+
+Pms::~Pms() {
+    clog << __FUNCTION__ << endl;
 }

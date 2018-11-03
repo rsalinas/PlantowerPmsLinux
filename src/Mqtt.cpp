@@ -56,6 +56,7 @@ bool MqttUploaderBackend::initialize(const Properties& props) {
     auto passwd = props.getString("mqtt.passwd", "");
     if (host.empty() || prefix.empty()) {
         clog << "mqtt not configured" << endl;
+        return false;
     }
     if (mosqpp::lib_init() != MOSQ_ERR_SUCCESS) {
         clog << "Could not initialize mosquitto" << endl;

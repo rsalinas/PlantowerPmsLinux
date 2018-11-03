@@ -7,6 +7,10 @@
 
 class Properties;
 
+enum CaptureMode {
+    ALWAYS_ON, SINGLE_SHOT, TIMED
+};
+
 struct Item {
     Item(const std::string& name, const std::string& desc, const std::string& unit) :
         name(name), desc(desc), unit(unit) {
@@ -28,7 +32,7 @@ public:
 };
 
 enum PollResult {
-    POLLRESULT_DATA, POLLRESULT_TIMEOUT, POLLRESULT_EOF, POLLRESULT_ERROR
+    POLLRESULT_DATA, POLLRESULT_TIMEOUT, POLLRESULT_EOF, POLLRESULT_ERROR, POLLRESULT_INTERRUPTED
 };
 
 
@@ -36,7 +40,7 @@ class Pms {
 public:
     const int stabilizationTime_ms = 30*1000;
     Pms(const char* port);
-    ~Pms() = default;
+    ~Pms();
 
     enum State {
         HEADER1, HEADER2, LENGTH, MEASUREMENT, CONTROLDATA, CKSUM
@@ -50,7 +54,7 @@ public:
         Measurement measurement;
         unsigned short control;
     };
-    RunResponse run(bool runOnce = false);
+    RunResponse run();
 
     void addListener(PmsMeasurementCallback& callback) {
         listeners_.push_back(&callback);
@@ -69,8 +73,17 @@ public:
     bool setActive(bool active);
     bool setRunning(bool running);
     bool pollMeasurementInPassiveMode();
+    bool run(CaptureMode captureMode, int captureInterval_secs );
+    bool isStopping() const {
+        return !running_;
+    }
+    void stop() {
+        running_ = false;
+    }
 
 private:
+    PollResult pollReadByte(char& ch, int timeout);
+
     void processMeasurement(unsigned short* data);
     void notifyError(PollResult result);
     void notifyError(const char* message);
@@ -79,6 +92,7 @@ private:
     State state_ = HEADER1;
     unsigned char statePos_ = 0;
     std::vector<PmsMeasurementCallback*> listeners_;
+    volatile bool running_ = true;
 };
 
 class Backend {

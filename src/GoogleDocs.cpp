@@ -60,11 +60,12 @@ bool GoogleDocsUploaderBackend::initialize(const Properties& props)  {
             for (auto i : items)
                 clog << "item: " << i << endl;
         gdu.reset(new GoogleDocsUploader{googleDocs_url.c_str(), items});
-        if (items.size() == 0) {
+        if (items.empty()) {
             clog << "Missing items for Google" << endl;
         }
         return true;
     }
+    clog << "GoogleDocsUploaderBackend not configured" << endl;
     return false;
 }
 bool GoogleDocsUploaderBackend::registerCallback(Pms& pms)  {
