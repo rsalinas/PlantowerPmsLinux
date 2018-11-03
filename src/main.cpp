@@ -7,6 +7,7 @@
 #include "CliParser.h"
 #include "Properties.h"
 #include "Mqtt.h"
+#include <csignal>
 
 #include <unistd.h>
 #include <thread>
@@ -15,6 +16,8 @@ using namespace std;
 
 static GoogleDocsUploaderBackend gdub;
 static MqttUploaderBackend mqttub;
+
+volatile static bool sRunning = true;
 
 enum RunningMode {
     MODE_NONE, MODE_RUNNING, MODE_SLEEPING
@@ -43,8 +46,12 @@ struct ConfigParser : public ConfigParserBase {
         captureMode = SINGLE_SHOT;
         return true;
     }},
-    {{"-t", "--timed"}, "seconds", "Set timed mode", [this](const char**&) -> bool {
+    {{"-t", "--timed"}, "seconds", "Set timed mode", [this](const char**&ptr) -> bool {
         captureMode = TIMED;
+        captureInterval_secs = atoi(*++ptr);
+        if (captureInterval_secs <= 0) {
+            clog << "Capture interval must be a positive number" << endl;
+        }
         return true;
     }},
     {{"-v", "--verbose"}, nullptr, "Set high verbosity", [this](const char**&) -> bool {
@@ -81,8 +88,18 @@ struct ConfigParser : public ConfigParserBase {
     CaptureMode captureMode = ALWAYS_ON;
     bool verbose = false;
     RunningMode runningMode = MODE_NONE;
+    int captureInterval_secs = 0;
 };
 
+void terminationHandler(int signum) {
+    if (sRunning) {
+        clog << "Shutdown requested" << endl;
+        sRunning = false;        
+    } else {
+        clog << "You seem impatient, bailing out" << endl;
+        exit(1);
+    }
+}
 int main(int argc, const char** argv)
 {
     std::vector<Backend*> backends = { &gdub, &mqttub };
@@ -105,19 +122,83 @@ int main(int argc, const char** argv)
     } else if (configParser.runningMode == MODE_SLEEPING) {
         pms.setRunning(false);
     }
+
+
+    struct sigaction action;
+
+    action.sa_handler = terminationHandler;
+    sigemptyset (&action.sa_mask);
+    action.sa_flags = 0;
+    for (auto signo : { SIGINT, SIGTERM })
+        sigaction(signo, &action, NULL);
+
+    //    Pms::RunResponse rr;
+    //    do {
+    //        clog << "Setting passive mode, we will poll" << endl;
+    //        pms.setActive(false);
+    //        usleep(500*1000);
+
+    //    } while (rr = pms.run(),
+    //             clog << "type: " << rr.type << " control ==" << rr.control << endl,
+    //             rr.type != Pms::RunResponse::RESPONSE_TYPE_CONTROL
+    //             || rr.control != 57600);
+    //    pms.pollMeasurementInPassiveMode();
+    //    rr = pms.run();
+    //    clog << "Type: " << rr.type << endl;
+    //    return 0;
     pms.setRunning(true);
-    std::thread th{[&]() {
-            auto ret = pms.run(configParser.captureMode == SINGLE_SHOT);
-            clog << "pms.run ended with " << ret << endl;
-                   }};
-    sleep(3);
-    while (!pms.sleepConfirmed_) {
-        clog << "Issuing sleep ..." << endl;
+    shared_ptr<void> setNotRunningGuard(NULL, [&](void*) {
+        clog << "Stopping device" << endl;
         pms.setRunning(false);
-        sleep(1);
+    });
+
+    switch (configParser.captureMode) {
+    case ALWAYS_ON:
+    {
+        clog << "always on" << endl;
+        pms.setActive(true);
+        Pms::RunResponse rr;
+        while (rr = pms.run(), sRunning && rr.type == Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+            clog << "Getting more measurements" << endl;
+        }
+        return rr.type != Pms::RunResponse::RESPONSE_TYPE_ERROR ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    clog << "Sleep confirmed" << endl;
-    th.join();
-    //    pms.setRunning(false);
-    //return ret ? EXIT_SUCCESS : EXIT_FAILURE;
+    case SINGLE_SHOT:
+    {
+        pms.setActive(false);
+        clog << "Waiting for stabilization" << endl;
+//        sleep(5);
+        clog << "Stable" << endl;
+        pms.pollMeasurementInPassiveMode();
+        auto rr = pms.run();
+        if (rr.type != Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+            clog << "Error getting sample" << endl;
+            return EXIT_FAILURE;
+        }
+        return EXIT_SUCCESS;
+        break;
+    }
+    case TIMED:
+        clog << "timed" << endl;
+        pms.setActive(false);
+        bool startStop = configParser.captureInterval_secs >= 5;
+        sleep(3);
+        Pms::RunResponse rr;
+        while (sRunning) {
+            pms.pollMeasurementInPassiveMode();
+            while (rr = pms.run(), rr.type != Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
+                clog << "****** got: " << rr.type << " " << rr.control << endl;
+                clog << "Waiting for measurement" << endl;
+            }
+            if (startStop) {
+                pms.setRunning(false);
+                sleep(configParser.captureInterval_secs - 3);
+                pms.setRunning(true);
+                sleep(3);
+            } else {
+                sleep(configParser.captureInterval_secs);
+            }
+        }
+        return EXIT_SUCCESS;
+    }
 }

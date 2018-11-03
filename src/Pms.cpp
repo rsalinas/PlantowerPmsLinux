@@ -33,6 +33,7 @@ bool Pms::sendCommand(unsigned char cmd, unsigned  char datah, unsigned  char da
 }
 
 bool Pms::setActive(bool active) {
+    clog << __FUNCTION__ << endl;
     return sendCommand(0xe1, 0, active ? 1 : 0);
 }
 
@@ -42,7 +43,7 @@ bool Pms::setRunning(bool running) {
 }
 
 bool Pms::pollMeasurementInPassiveMode() {
-
+    clog << __FUNCTION__ << endl;
     return sendCommand( 0xe2, 0, 0);
 }
 
@@ -57,8 +58,13 @@ PollResult pollReadByte(char& ch, int fd, int timeout)
     tv.tv_sec = timeout / 1000;
     tv.tv_usec = timeout % 1000 * 1000;
 
+    retry:
     switch (select(fd + 1, &rfds, NULL, &efds, &tv)) {
     case -1:
+        if (errno == EINTR) {
+            clog << "interrupted system call, probably signal, FIXME" << endl;
+            goto retry;
+        }
         perror("select()");
         return POLLRESULT_ERROR;
     case 0: //timeout
@@ -191,15 +197,15 @@ Pms::Pms(const char* port) : fd_(open(port, O_RDWR| O_NOCTTY)) {
     //    tcflush( fd, TCIFLUSH );
 }
 
-bool Pms::run(bool runOnce) {
-    char b;
+Pms::RunResponse Pms::run(bool runOnce) {
     short len_ = 0;
     unsigned char ecksum_ = 0, cksum = 0;
     Measurement payload;
-    short hostdata = 0;
+    unsigned short hostdata = 0;
     enum PacketType {
         TYPE_NONE, TYPE_MEASUREMENT, TYPE_CONTROL
     } packetType = TYPE_NONE;
+    char b;
     PollResult result;
     while (result = pollReadByte(b, fd_, 3000), result == POLLRESULT_DATA) {
         switch (state_) {
@@ -255,34 +261,39 @@ bool Pms::run(bool runOnce) {
                 ecksum_ = b << 8;
             } else {
                 ecksum_ |= b;
+                setState(HEADER1);
                 if (ecksum_ == cksum)  {
                     if (packetType == TYPE_MEASUREMENT) {
                         processMeasurement(reinterpret_cast<unsigned short*>(payload));
-                        if (runOnce)
-                            return true;
+                        return { Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT };
                     } else {
                         processControl(hostdata);
+                        return Pms::RunResponse{ Pms::RunResponse::RESPONSE_TYPE_CONTROL, {}, hostdata };
                     }
                 } else {
                     clog << "Bad checksum: " << int(ecksum_) << " vs " << int(cksum) << endl;
                 }
-                setState(HEADER1);
             }
             break;
 
         }
     }
     notifyError(result);
-    return false;
+    return { Pms::RunResponse::RESPONSE_TYPE_ERROR };
 }
 
 void Pms::processControl(unsigned short data) {
-    clog << "Control data: " << data << endl;
     switch (data)  {
     case 0xe400:
         clog << "Sleeping confirmed" << endl;
-        sleepConfirmed_ = true;
         break;
-
+    case 57600:
+        clog << "Passive mode confirmed" << endl;
+        break;
+    case 57601:
+        clog << "Active mode confirmed" << endl;
+        break;
+    default:
+        clog << "Unknown control data: " << data << endl;
     }
 }

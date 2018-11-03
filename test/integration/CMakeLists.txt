@@ -1,6 +1,7 @@
 cmake_minimum_required (VERSION 2.8)
 
-project(pms-unit-test)
+project(pms-int-test)
+
 
 include_directories(../../src)
 add_executable(${PROJECT_NAME}

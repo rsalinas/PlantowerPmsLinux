@@ -48,8 +48,9 @@ public:
             RESPONSE_TYPE_NONE, RESPONSE_TYPE_ERROR, RESPONSE_TYPE_MEASUREMENT,RESPONSE_TYPE_CONTROL
         } type;
         Measurement measurement;
+        unsigned short control;
     };
-    bool run(bool runOnce = false);
+    RunResponse run(bool runOnce = false);
 
     void addListener(PmsMeasurementCallback& callback) {
         listeners_.push_back(&callback);
@@ -68,7 +69,6 @@ public:
     bool setActive(bool active);
     bool setRunning(bool running);
     bool pollMeasurementInPassiveMode();
-    bool sleepConfirmed_ = false;
 
 private:
     void processMeasurement(unsigned short* data);
