@@ -1,21 +1,12 @@
 #include "Pms.h"
-#include "GoogleDocs.h"
+
 #include <iostream>
-#include <cstring>
-#include <functional>
 
 #include "CliParser.h"
 #include "Properties.h"
-#include "Mqtt.h"
-#include <csignal>
-
-#include <unistd.h>
-#include <thread>
+#include "SignalSetter.h"
 
 using namespace std;
-
-static GoogleDocsUploaderBackend gdub;
-static MqttUploaderBackend mqttub;
 
 enum RunningMode {
     MODE_NONE, MODE_RUNNING, MODE_SLEEPING
@@ -53,12 +44,12 @@ struct ConfigParser : public ConfigParserBase {
         clog << "Setting verbose" << endl;
         return true;
     }},
-    {{"-r", "--running"}, nullptr, "Set high verbosity", [this](const char**&) -> bool {
+    {{"-r", "--running"}, nullptr, "Set device in running mode", [this](const char**&) -> bool {
         clog << "Set running" << endl;
         runningMode = MODE_RUNNING;
         return true;
     }},
-    {{"-s", "--sleeping"}, nullptr, "Set high verbosity", [this](const char**&) -> bool {
+    {{"-s", "--sleeping"}, nullptr, "Put device to sleep", [this](const char**&) -> bool {
         clog << "Set sleeping" << endl;
         runningMode = MODE_SLEEPING;
         return true;
@@ -68,7 +59,7 @@ struct ConfigParser : public ConfigParserBase {
 
     void dump() {
         clog << "Device: " << device << endl;
-        clog << "Configfile: " << configFile << endl;
+        clog << "Config file: " << configFile << endl;
 
     }
     bool applyFromProperties(const Properties& props) {
@@ -85,27 +76,8 @@ struct ConfigParser : public ConfigParserBase {
     int captureInterval_secs = 0;
 };
 
-class SignalSetter {
-public:
-    SignalSetter(int signo, void (*handler)(int)) : signo_(signo) {
-        struct sigaction action;
-        action.sa_handler = handler;
-        sigemptyset (&action.sa_mask);
-        action.sa_flags = 0;
-        sigaction(signo, &action, &oldAction);
-    }
-    ~SignalSetter() {
-        sigaction(signo_, &oldAction, nullptr);
-    }
-
-private:
-    const int signo_;
-    struct sigaction oldAction;
-};
-
 int main(int argc, const char** argv)
 {
-    std::vector<Backend*> backends = { &gdub, &mqttub };
     ConfigParser configParser;
     if (!configParser.parse(argv)) {
         return EXIT_SUCCESS;
@@ -114,13 +86,14 @@ int main(int argc, const char** argv)
     Properties props{configParser.configFile};
     configParser.applyFromProperties(props);
     props.dump();
-    for (auto backend : backends)
+    for (auto backend : Registry::backends_)
         backend->initialize(props);
+
     static Pms pms(configParser.device.c_str());
 
-    for (auto backend : backends)
-        if (*backend)
-            backend->registerCallback(pms);
+    for (auto backend : Registry::backends_)
+        backend->registerCallback(pms);
+
     if (configParser.runningMode == MODE_RUNNING) {
         pms.setRunning(true);
         return EXIT_SUCCESS;
@@ -140,5 +113,6 @@ int main(int argc, const char** argv)
     };
     SignalSetter signalHandlerSIGINT{SIGINT, terminationHandler};
     SignalSetter signalHandlerSIGTERM{SIGTERM, terminationHandler};
-    return pms.run(configParser.captureMode, configParser.captureInterval_secs) ? EXIT_SUCCESS : EXIT_FAILURE;
+    return pms.run(configParser.captureMode,
+                   configParser.captureInterval_secs) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

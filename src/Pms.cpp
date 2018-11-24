@@ -11,6 +11,13 @@
 
 using namespace std;
 
+std::vector<Backend*> Registry::backends_;
+
+Registry::Registry(Backend& backend)  {
+    clog << "Registering backend: " << backend.name() << endl;
+    backends_.push_back(&backend);
+}
+
 std::string bufferToHex(const unsigned char* buffer, size_t length) {
     std::stringstream stream;
     stream << std::hex  << std::setfill ('0') << std::setw(sizeof(char)*2);
@@ -27,13 +34,12 @@ bool Pms::sendCommand(unsigned char cmd, unsigned  char datah, unsigned  char da
         cksum += ch;
     command[5] = cksum >> 8 & 0xff;
     command[6] = cksum & 0xff;
-    clog << "Checksum: " << cksum ;
-    clog << " Issuing command: " << bufferToHex(command.cbegin(), command.size()) << endl;
+    //    clog << "Issuing command: " << bufferToHex(command.cbegin(), command.size()) << endl;
     return write(fd_, command.begin(), command.size()) == sizeof command;
 }
 
 bool Pms::setActive(bool active) {
-    clog << __FUNCTION__ << endl;
+    clog << __FUNCTION__ << " " << int(active) << endl;
     return sendCommand(0xe1, 0, active ? 1 : 0);
 }
 
@@ -82,19 +88,19 @@ retry:
         if (!FD_ISSET(fd_, &rfds)) {
             clog << "FD has nothing" << endl;
             return POLLRESULT_EOF;
-        }
-        switch (read(fd_, &ch, 1)) {
-        case 0:
-            return POLLRESULT_EOF;
-        case 1:
-            return POLLRESULT_DATA;
-        default:
-            return POLLRESULT_ERROR;
+        } else {
+            switch (read(fd_, &ch, 1)) {
+            case 0:
+                return POLLRESULT_EOF;
+            case 1:
+                return POLLRESULT_DATA;
+            default:
+                clog << "read said -1" << endl;
+                return POLLRESULT_ERROR;
+            }
         }
     }
 }
-
-
 
 const std::vector<Item> items= {{"P_CF_PM10", "CF=1, PM1.0", "μg/m3"},
                                 {"P_CF_PM25", "CF=1, PM2.5", "μg/m3"},
@@ -117,7 +123,6 @@ void Pms::notifyError(const char* message) {
         listener->onError(message);
 }
 
-
 void Pms::notifyError(PollResult result) {
     const char* errorMessage = nullptr;
     switch (result) {
@@ -133,7 +138,6 @@ void Pms::notifyError(PollResult result) {
         clog << "Timeout: device was silent too long";
         errorMessage = "unresponsive";
         break;
-
     case POLLRESULT_INTERRUPTED:
         clog << "Interrupted by user" << endl;
         errorMessage = "closed";
@@ -148,8 +152,8 @@ void Pms::notifyError(PollResult result) {
 void Pms::processMeasurement(unsigned short* data) {
     static unsigned short lastone[12];
 
-    if (memcmp(data, lastone, sizeof(lastone))== 0) {
-        //        clog << "Data didn't change";
+    if (memcmp(data, lastone, sizeof(lastone)) == 0) {
+        // Data didn't change;
         return;
     }
     memcpy(lastone, data, sizeof lastone);
@@ -178,6 +182,7 @@ bool Pms::run(CaptureMode captureMode, int captureInterval_secs ) {
         while (rr = run(), running_ && rr.type == Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
             clog << "Getting more measurements" << endl;
         }
+        clog << "rr.type == " << rr.type << endl;
         return rr.type != Pms::RunResponse::RESPONSE_TYPE_ERROR;
     }
     case SINGLE_SHOT:
@@ -197,17 +202,27 @@ bool Pms::run(CaptureMode captureMode, int captureInterval_secs ) {
     case TIMED:
         clog << "timed" << endl;
         setActive(false);
+        setRunning(true);
         bool startStop = captureInterval_secs >= 5;
         sleep(3);
         Pms::RunResponse rr;
         while (running_) {
             pollMeasurementInPassiveMode();
             while (rr = run(), rr.type != Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT) {
-                clog << "****** got: " << rr.type << " " << rr.control << endl;
-                clog << "Waiting for measurement" << endl;
+                if (!running_)
+                    return true;
+                clog << "****** got: " << rr.type << " " << rr.control
+                     <<  " while waiting for measurement" << endl;
             }
             if (startStop) {
+                clog << "START-STOP" << endl;
                 setRunning(false);
+                if (rr = run(), rr.type != Pms::RunResponse::RESPONSE_TYPE_CONTROL ||
+                        rr.control != 58368) {
+                    clog << "strange, our sleep command was not confirmed" << endl;
+                } else {
+                    clog << "good, sleep was confirmed" << endl;
+                }
                 sleep(captureInterval_secs - 3);
                 setRunning(true);
                 sleep(3);
@@ -274,7 +289,7 @@ Pms::RunResponse Pms::run() {
     } packetType = TYPE_NONE;
     char b;
     PollResult result;
-    while (result = pollReadByte(b, 3000), result == POLLRESULT_DATA) {
+    while (result = pollReadByte(b, 5000), result == POLLRESULT_DATA) {
         switch (state_) {
         case HEADER1:
             if (b == 'B') {
@@ -295,15 +310,26 @@ Pms::RunResponse Pms::run() {
             if (statePos_++ == 0) {
                 if (b!= 0) {
                     clog << "High byte of length is not null" << endl;
-                    setState(HEADER1);
+                    return { Pms::RunResponse::RESPONSE_TYPE_ERROR };
+                    //setState(HEADER1);
                     break;
                 }
                 len_ = b << 8;
             } else {
                 len_ |= b;
-                clog << "Length received: " << len_ << endl;
-                setState(len_ == 28 ? MEASUREMENT : CONTROLDATA);
-                packetType = len_ == 28 ? TYPE_MEASUREMENT : TYPE_CONTROL;
+                switch (len_) {
+                case 28:
+                    setState(MEASUREMENT);
+                    packetType = TYPE_MEASUREMENT;
+                    break;
+                case 4:
+                    setState(CONTROLDATA);
+                    packetType= TYPE_CONTROL;
+                    break;
+                default:
+                    clog << "Wrong length received, corruption" << endl;
+                    return {Pms::RunResponse::RESPONSE_TYPE_ERROR};
+                }
             }
             break;
         case MEASUREMENT:
@@ -335,10 +361,11 @@ Pms::RunResponse Pms::run() {
                         return { Pms::RunResponse::RESPONSE_TYPE_MEASUREMENT };
                     } else {
                         processControl(hostdata);
-                        return Pms::RunResponse{ Pms::RunResponse::RESPONSE_TYPE_CONTROL, {}, hostdata };
+                        return { Pms::RunResponse::RESPONSE_TYPE_CONTROL, {}, hostdata };
                     }
                 } else {
                     clog << "Bad checksum: " << int(ecksum_) << " vs " << int(cksum) << endl;
+                    return { Pms::RunResponse::RESPONSE_TYPE_ERROR };
                 }
             }
             break;
@@ -351,7 +378,7 @@ Pms::RunResponse Pms::run() {
 
 void Pms::processControl(unsigned short data) {
     switch (data)  {
-    case 0xe400:
+    case 58368:
         clog << "Sleeping confirmed" << endl;
         break;
     case 57600:
@@ -367,4 +394,13 @@ void Pms::processControl(unsigned short data) {
 
 Pms::~Pms() {
     clog << __FUNCTION__ << endl;
+    if (close(fd_) < 0) {
+        auto errorString = strerror(errno);
+        clog << "Warning: error closing serial port: " << errorString << endl;
+    }
+}
+
+void Pms::stop() {
+    clog << "pms stopped" << endl;
+    running_ = false;
 }

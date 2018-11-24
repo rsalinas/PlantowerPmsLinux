@@ -4,11 +4,18 @@
 #include <vector>
 #include <algorithm>
 #include <thread>
-
 class Properties;
 
 enum CaptureMode {
     ALWAYS_ON, SINGLE_SHOT, TIMED
+};
+
+class Backend;
+
+class Registry {
+public:
+    Registry(Backend& backend);
+    static std::vector<Backend*> backends_;
 };
 
 struct Item {
@@ -32,9 +39,12 @@ public:
 };
 
 enum PollResult {
-    POLLRESULT_DATA, POLLRESULT_TIMEOUT, POLLRESULT_EOF, POLLRESULT_ERROR, POLLRESULT_INTERRUPTED
+    POLLRESULT_DATA,
+    POLLRESULT_TIMEOUT,
+    POLLRESULT_EOF,
+    POLLRESULT_ERROR,
+    POLLRESULT_INTERRUPTED,
 };
-
 
 class Pms {
 public:
@@ -77,9 +87,7 @@ public:
     bool isStopping() const {
         return !running_;
     }
-    void stop() {
-        running_ = false;
-    }
+    void stop();
 
 private:
     PollResult pollReadByte(char& ch, int timeout);
@@ -99,5 +107,5 @@ class Backend {
 public:
     virtual bool initialize(const Properties& props) = 0;
     virtual bool registerCallback(Pms& pms) = 0;
-    virtual operator bool() const = 0;
+    virtual const char* name() = 0;
 };

@@ -28,7 +28,9 @@ class GoogleDocsUploaderBackend : public Backend {
 public:
     bool initialize(const Properties& props) override;
     bool registerCallback(Pms& pms) override;
-    operator bool() const override;
+    const char* name() {
+        return "Google Docs";
+    }
 private:
     std::unique_ptr<GoogleDocsUploader> gdu;
 };

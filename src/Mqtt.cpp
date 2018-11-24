@@ -6,18 +6,20 @@
 
 using namespace std;
 
+static MqttUploaderBackend mub;
+static Registry reg{mub};
+
 MqttUploader::MqttUploader(std::unique_ptr<mosqpp::mosquittopp> mosq, const std::string& prefix)
     : mosq_(std::move(mosq))
     , prefix_(prefix)
     , statusTopic(prefix + "/status")
 {
-
 }
 
 MqttUploader::~MqttUploader() {
-//    std::string topic = prefix_ + "/status";
-//    std::string payload = "offline";
-//    auto err = mosq_->publish(nullptr, topic.c_str(), payload.size(), payload.c_str(), 0, false);
+    //    std::string topic = prefix_ + "/status";
+    //    std::string payload = "offline";
+    //    auto err = mosq_->publish(nullptr, topic.c_str(), payload.size(), payload.c_str(), 0, false);
 
     auto err = mosq_->disconnect();
     mosq_->loop();
@@ -98,12 +100,10 @@ bool MqttUploaderBackend::initialize(const Properties& props) {
 }
 
 bool MqttUploaderBackend::registerCallback(Pms& pms) {
-    pms.addListener(*uploader_);
+    if (uploader_) {
+        pms.addListener(*uploader_);
+    }
     return true;
-}
-
-MqttUploaderBackend::operator bool() const {
-    return uploader_.get() != nullptr;
 }
 
 void MqttUploader::onError(const char* message) {

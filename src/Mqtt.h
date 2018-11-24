@@ -22,7 +22,9 @@ class MqttUploaderBackend : public Backend {
 public:
     bool initialize(const Properties& props) override;
     bool registerCallback(Pms& pms) override;
-    operator bool() const override;
+    const char* name() override {
+        return "Mosquitto";
+    }
 private:
     std::unique_ptr<MqttUploader> uploader_;
 };

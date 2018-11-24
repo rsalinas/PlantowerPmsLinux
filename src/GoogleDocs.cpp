@@ -6,6 +6,9 @@
 
 using namespace std;
 
+static GoogleDocsUploaderBackend dgub;
+static Registry reg{dgub};
+
 GoogleDocsUploader::GoogleDocsUploader(const char* url, const std::vector<google_entry_t>& itemList)
     : url_(url), itemList_(itemList) {
 }
@@ -69,10 +72,7 @@ bool GoogleDocsUploaderBackend::initialize(const Properties& props)  {
     return false;
 }
 bool GoogleDocsUploaderBackend::registerCallback(Pms& pms)  {
-    pms.addListener(*gdu);
+    if (gdu.get() != nullptr)
+        pms.addListener(*gdu);
     return true;
-}
-
-GoogleDocsUploaderBackend::operator bool() const {
-    return gdu.get() != nullptr;
 }

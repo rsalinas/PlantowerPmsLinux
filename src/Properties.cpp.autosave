@@ -45,7 +45,7 @@ std::string Properties::getString(const std::string& key,
 int Properties::getInt(const std::string& key, int defaultValue) const {
     try {
         return atoi(getString(key).c_str());
-    } catch (const KeyNotFound& e) {
+    } catch (constKeyNotFound& e) {
         return defaultValue;
     }
 }

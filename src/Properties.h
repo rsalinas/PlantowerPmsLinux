@@ -13,12 +13,9 @@ public:
     int getInt(const std::string& key, int defaultValue = 0) const;
     void dump() const;
     class KeyNotFound : public std::exception {
-
     };
 
 private:
     std::map<std::string, std::string> map_;
     static const std::string NO_DEFAULT_VALUE;
 };
-
-
